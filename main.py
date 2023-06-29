@@ -1,7 +1,9 @@
 import os
 import nltk
 import numpy as np
-from nltk.tokenize import sent_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+from nltk.tokenize import sent_tokenize, word_tokenize
 from transformers import BartTokenizer, BartForConditionalGeneration
 
 
@@ -11,6 +13,17 @@ import matplotlib.pyplot as plt
 
 
 nltk.download('punkt')
+
+def preprocess_sentence(sentence):
+    lemmatizer = WordNetLemmatizer() # 用在單字的詞形還原
+    stop_words = set(stopwords.words('english')) # 從NLTK獲取停用詞
+    words = word_tokenize(sentence.lower()) # 將句子轉成單字列表
+    words = [lemmatizer.lemmatize(word) for word in words if word.isalnum()] # 使用詞形還元器，並且只保留數字和字母構成的單字
+    words = [word for word in words if word not in stop_words] # 去除停用詞
+    return words
+
+
+
 
 # 載入GloVe詞向量模型
 # 6B: 使用60億的單字語料庫訓練，300d代表300維度
@@ -45,7 +58,8 @@ print(mean_value)  # 輸出結果為 3.0
 
 
 def sentence_to_vector(sentence, word_vectors):
-    words = sentence.split()
+    print(f'sentence: {sentence}')
+    words = sentence
     print(f'words: {words}')
     # 獲取單字的詞向量，如果單字不存在則返回一個300維的0向量
     vectors = [word_vectors.get(word.lower(), np.zeros(300)) for word in words]
@@ -82,10 +96,13 @@ def textrank(similarity_matrix, d=0.85, max_iter=100, tol=1e-4):
     scores = np.ones(num_sentences)  # 初始化權重為1
     old_scores = np.zeros(num_sentences)
     sentence_scores = {} # 儲存句子分數
+    # out_degree_sum = np.sum(similarity_matrix, axis=1)  # 每個句子的出度之和
 
-    for _ in range(max_iter):
+    for k in range(max_iter):
+        print(f'k: 迭代第{k}次')
         scores_difference = np.sum(np.abs(scores - old_scores))
         if scores_difference < tol:
+            print(f'scores_difference: {scores_difference} < tol: {tol}，停止迭代')
             break
 
         old_scores = scores.copy()
@@ -93,9 +110,13 @@ def textrank(similarity_matrix, d=0.85, max_iter=100, tol=1e-4):
         for i in range(num_sentences):
             # similarity_matrix[:, i]: 以當前句子為目標的所有相似度
             # np.nonzero(similarity_matrix[:, i]): 找出所有相似度不為0的句子
-            incoming_edges = np.nonzero(similarity_matrix[:, i])[0]  
+            incoming_edges = np.nonzero(similarity_matrix[:, i])[0]
+            # print(f'incoming_edges: {incoming_edges}')  
             if len(incoming_edges) > 0:
-                weights = similarity_matrix[incoming_edges, i] / np.sum(similarity_matrix[incoming_edges, :], axis=1)  # 計算權重
+                if i==0:
+                    print(f'similarity_matrix[incoming_edges, {i}]: {similarity_matrix[incoming_edges, i]}')
+                    print(f'similarity_matrix[incoming_edges, :]: {np.sum(similarity_matrix[incoming_edges, :], axis=1)}')
+                weights = similarity_matrix[incoming_edges, i] / np.sum(similarity_matrix[incoming_edges, :], axis=1)  # 計算權重 、similarity_matrix[incoming_edges, :]: incoming_edges代表row，:代表所有column
                 scores[i] = (1 - d) + d * np.sum(weights * old_scores[incoming_edges])  # 使用TextRank公式更新權重
                 sentence_scores[i] = scores[i]
 
@@ -132,24 +153,20 @@ def bart_summary(text):
 
 
 def graph(sentences, similarity_matrix):
-    # 創建無向圖
-    G = nx.Graph()
-    # 添加節點
-    for i in range(len(sentences)):
-        G.add_node(i)
-    # 添加邊
-    for i in range(len(sentences)):
-        for j in range(i+1, len(sentences)):
-            similarity = similarity_matrix[i, j]
-            G.add_edge(i, j, weight=similarity)
+    # 設置字型
+    font = {'family': 'SimSun'}
+    plt.rc('font', **font)
 
-    # 繪製節點圖
-    pos = nx.spring_layout(G)
-    nx.draw_networkx_nodes(G, pos)
-    nx.draw_networkx_edges(G, pos)
-    nx.draw_networkx_labels(G, pos)
-    plt.title('Similarity Graph')
-    plt.axis('off')
+    similarity_graph = nx.from_numpy_array(similarity_matrix)
+    top_nodes = sorted(similarity_graph.nodes())[:5]
+    subgraph = similarity_graph.subgraph(top_nodes)
+    # 繪製圖形
+    plt.figure(figsize=(10, 6))
+    pos = nx.spring_layout(subgraph)
+    nx.draw_networkx_nodes(subgraph, pos=pos, node_color='lightblue', node_size=500)
+    nx.draw_networkx_edges(subgraph, pos=pos, edge_color='gray')
+    nx.draw_networkx_labels(subgraph, pos=pos, font_size=10)
+    plt.title("相似矩陣")
     plt.show()
 
 
@@ -158,9 +175,10 @@ def main():
     
     # sentence tokenization
     article = '''(CNN)Anthony Ray Hinton is thankful to be free after nearly 30 years on Alabama's death row for murders he says he didn't commit. And incredulous that it took so long. Hinton, 58, looked up, took in the sunshine and thanked God and his lawyers Friday morning outside the county jail in Birmingham, minutes after taking his first steps as a free man since 1985. He spoke of unjustly losing three decades of his life, under fear of execution, for something he didn't do. "All they had to do was to test the gun, but when you think you're high and mighty and you're above the law, you don't have to answer to nobody," Hinton told reporters. "But I've got news for you -- everybody that played a part in sending me to death row, you will answer to God." Jefferson County Circuit Court Judge Laura Petro had ordered Hinton released after granting the state's motion to dismiss charges against him. Hinton was convicted of murder in the 1985 deaths of two Birmingham-area, fast-food restaurant managers, John Davidson and Thomas Wayne Vason. But a new trial was ordered in 2014 after firearms experts testified 12 years earlier that the revolver Hinton was said to have used in the crimes could not be matched to evidence in either case, and the two killings couldn't be linked to each other. "Death Row Stories": Hard questions about the U.S. capital punishment system . The state then declined to re-prosecute the case. Hinton was 29 at the time of the killings and had always maintained his innocence, said the Equal Justice Initiative, a group that helped win his release. "Race, poverty, inadequate legal assistance, and prosecutorial indifference to innocence conspired to create a textbook example of injustice," Bryan Stevenson, the group's executive director and Hinton's lead attorney, said of his African-American client. "I can't think of a case that more urgently dramatizes the need for reform than what has happened to Anthony Ray Hinton." Stevenson said the "refusal of state prosecutors to re-examine this case despite persuasive and reliable evidence of innocence is disappointing and troubling." Amnesty report: Executions down but death sentences on the rise . Dressed in a dark suit and blue shirt, Hinton praised God for his release, saying he was sent "not just a lawyer, but the best lawyers." He said he will continue to pray for the families of the murder victims. Both he and those families have suffered a miscarriage of justice, he said. "For all of us that say that we believe in justice, this is the case to start showing, because I shouldn't have (sat) on death row for 30 years," he said. Woman who spent 22 years on death row has case tossed . Hinton was accompanied Friday by two of his sisters, one of whom still lives in the Birmingham area. Other siblings will fly to the area to see him soon, Stevenson said. His mother, with whom he lived at the time of his arrest, is no longer living, according to the lawyer. Hinton planned to spend at least this weekend at the home of a close friend. He will meet with his attorneys Monday to start planning for his immediate needs, such as obtaining identification and getting a health checkup, Stevenson said. The plan now is to spend a few weeks to get oriented with freedom and "sort out what he wants to do," Stevenson said.'''
+    #text = re.sub(f'[{string.punctuation}]', '', article)
     sentences = sent_tokenize(article)
     print(f'總共有: {len(sentences)} 個句子')
-
+    preprocessed_sentences = [preprocess_sentence(sentence) for sentence in sentences]
     folder_path = "glove/glove.6B"
     glove_file = 'glove.6B.300d.txt'
     glove_file = os.path.abspath(os.path.join(folder_path, glove_file))
@@ -170,7 +188,7 @@ def main():
     # print(word_vectors)
 
     sentence_vectors = []
-    for sentence in sentences:
+    for sentence in preprocessed_sentences:
         vector = sentence_to_vector(sentence, word_vectors)
         sentence_vectors.append(vector)
 
@@ -208,7 +226,7 @@ def main():
 
 
 
-    # graph(sentences, similarity_matrix)
+    graph(sentences, similarity_matrix)
 
 
     # sentence_level_word_embedding(article)

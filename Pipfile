@@ -12,6 +12,7 @@ torchvision = "*"
 torchaudio = "*"
 gensim = "*"
 matplotlib = "*"
+scikit-learn = "*"
 
 [dev-packages]
 
